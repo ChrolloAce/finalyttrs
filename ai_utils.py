@@ -2,14 +2,22 @@ import os
 import json
 from typing import Dict, List, Any, Optional
 from openai import OpenAI
+import httpx
 from dotenv import load_dotenv
 
 # Load environment variables
 load_dotenv()
 
-# Initialize OpenAI client
+# Initialize OpenAI client with custom httpx client to avoid proxies issue
 api_key = os.getenv("OPENAI_API_KEY")
-client = OpenAI(api_key=api_key)
+http_client = httpx.Client(
+    timeout=60.0,
+    follow_redirects=True
+)
+client = OpenAI(
+    api_key=api_key,
+    http_client=http_client
+)
 
 def generate_summary(transcript: str, max_words: int = 100) -> str:
     """
