@@ -1,6 +1,13 @@
-from youtube_transcript_api import YouTubeTranscriptApi
+from youtube_transcript_api import YouTubeTranscriptApi, NoTranscriptFound, TranscriptsDisabled, VideoUnavailable, NoTranscriptAvailable
 from urllib.parse import urlparse, parse_qs
 from typing import List, Dict, Any, Optional
+import sys
+import logging
+from youtube_handler import YouTubeTranscriptFetcher
+
+# Set up logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
 def extract_video_id(url: str) -> str:
     """
@@ -47,8 +54,42 @@ def get_transcript(video_id: str) -> List[Dict[str, Any]]:
         List of transcript segments with text and timestamp information
     """
     try:
-        return YouTubeTranscriptApi.get_transcript(video_id)
+        logger.info(f"Attempting to fetch transcript for video ID: {video_id}")
+        
+        # First try: Use youtube-transcript-api
+        try:
+            transcript = YouTubeTranscriptApi.get_transcript(video_id)
+            logger.info(f"Successfully fetched transcript using youtube-transcript-api")
+            return transcript
+        except (NoTranscriptFound, TranscriptsDisabled, VideoUnavailable, NoTranscriptAvailable) as e:
+            logger.warning(f"youtube-transcript-api method failed: {str(e)}")
+            logger.info("Trying alternate transcript fetching methods...")
+            
+            # Second try: Try with list_transcripts to get more information
+            try:
+                transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
+                available_transcripts = [t.language_code for t in transcript_list]
+                
+                if available_transcripts:
+                    logger.info(f"Available transcripts: {available_transcripts}")
+                    # Try to get the first available transcript
+                    transcript = transcript_list.find_transcript(available_transcripts).fetch()
+                    logger.info(f"Successfully fetched alternate transcript: {available_transcripts[0]}")
+                    return transcript
+                else:
+                    logger.warning(f"No transcripts found using list_transcripts")
+            except Exception as inner_e:
+                logger.warning(f"list_transcripts method failed: {str(inner_e)}")
+            
+            # Third try: Use our direct YouTube API access method
+            logger.info("Trying direct YouTube API access method")
+            return YouTubeTranscriptFetcher.fetch_transcript(video_id)
+        
     except Exception as e:
+        logger.error(f"All transcript fetching methods failed!")
+        logger.error(f"Unexpected error fetching transcript: {str(e)}")
+        logger.error(f"Python version: {sys.version}")
+        logger.error(f"youtube-transcript-api version: {getattr(YouTubeTranscriptApi, '__version__', 'unknown')}")
         raise Exception(f"Error fetching transcript: {str(e)}")
 
 def get_transcript_text(video_id: str) -> str:
