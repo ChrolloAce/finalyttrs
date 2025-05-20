@@ -1,8 +1,9 @@
 fastapi==0.104.1
 uvicorn==0.23.2
 pydantic==2.4.2
-youtube-transcript-api==0.6.2
+youtube-transcript-api==0.6.1
 openai==1.1.1
 python-dotenv==1.0.0
 httpx==0.24.1
-requests==2.31.0 
+requests==2.31.0
+beautifulsoup4==4.12.2 

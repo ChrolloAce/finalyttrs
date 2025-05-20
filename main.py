@@ -3,10 +3,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, HttpUrl
 from typing import List, Dict, Any, Optional
 import uvicorn
-import os
-import traceback
 
-from youtube_utils import extract_video_id, get_transcript, get_transcript_text, format_seconds_to_mmss
+from youtube_utils import extract_video_id, get_transcript, get_transcript_text, format_seconds_to_mmss, test_proxies, PROXY_LIST
 from ai_utils import generate_summary, generate_tags, generate_topic_timestamps
 
 app = FastAPI(
@@ -57,36 +55,13 @@ async def get_video_transcript(url: str = Query(..., description="YouTube video 
     Get the full transcript data for a YouTube video including timestamps.
     """
     try:
-        # First, check if URL is provided
-        if not url:
-            raise ValueError("YouTube URL cannot be empty")
-            
-        # Extract video ID
         video_id = extract_video_id(url)
-        if not video_id:
-            raise ValueError(f"Could not extract video ID from provided URL: {url}")
-            
-        # Get transcript with retries
-        transcript_data = get_transcript(video_id, retries=3)
-        
+        transcript_data = get_transcript(video_id)
         return {"video_id": video_id, "transcript": transcript_data}
     except ValueError as e:
-        # Bad request for invalid input
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        # Log the full error for debugging in server logs
-        print(f"Error processing request for {url}: {str(e)}")
-        print(traceback.format_exc())
-        
-        # Provide a more helpful message to the user
-        error_message = str(e)
-        if "Could not retrieve a transcript" in error_message:
-            raise HTTPException(
-                status_code=404, 
-                detail=f"No transcript available for video ID {video_id}. The video might have disabled captions or YouTube might be blocking access."
-            )
-        else:
-            raise HTTPException(status_code=500, detail=f"Server error: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/text", response_model=TranscriptTextResponse, tags=["Transcript"])
 async def get_video_transcript_text(url: str = Query(..., description="YouTube video URL")):
@@ -94,36 +69,13 @@ async def get_video_transcript_text(url: str = Query(..., description="YouTube v
     Get the transcript text only (without timestamps) for a YouTube video.
     """
     try:
-        # First, check if URL is provided
-        if not url:
-            raise ValueError("YouTube URL cannot be empty")
-            
-        # Extract video ID
         video_id = extract_video_id(url)
-        if not video_id:
-            raise ValueError(f"Could not extract video ID from provided URL: {url}")
-            
-        # Get transcript text
         transcript_text = get_transcript_text(video_id)
-        
         return {"video_id": video_id, "text": transcript_text}
     except ValueError as e:
-        # Bad request for invalid input
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        # Log the full error for debugging
-        print(f"Error processing request for {url}: {str(e)}")
-        print(traceback.format_exc())
-        
-        # Provide a helpful message
-        error_message = str(e)
-        if "Could not retrieve a transcript" in error_message:
-            raise HTTPException(
-                status_code=404, 
-                detail=f"No transcript available for video ID {video_id}. The video might have disabled captions or YouTube might be blocking access."
-            )
-        else:
-            raise HTTPException(status_code=500, detail=f"Server error: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/summary", response_model=SummaryResponse, tags=["Analysis"])
 async def get_video_summary(
@@ -134,36 +86,14 @@ async def get_video_summary(
     Get a concise summary of the YouTube video.
     """
     try:
-        # Validate input
-        if not url:
-            raise ValueError("YouTube URL cannot be empty")
-            
-        # Extract video ID
         video_id = extract_video_id(url)
-        if not video_id:
-            raise ValueError(f"Could not extract video ID from provided URL: {url}")
-            
-        # Get transcript text
         transcript_text = get_transcript_text(video_id)
-        
-        # Generate summary
         summary = generate_summary(transcript_text, max_words)
-        
         return {"video_id": video_id, "summary": summary}
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        print(f"Error processing summary request for {url}: {str(e)}")
-        print(traceback.format_exc())
-        
-        error_message = str(e)
-        if "Could not retrieve a transcript" in error_message:
-            raise HTTPException(
-                status_code=404, 
-                detail=f"No transcript available for video ID {video_id}. The video might have disabled captions or YouTube might be blocking access."
-            )
-        else:
-            raise HTTPException(status_code=500, detail=f"Server error: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/tags", response_model=TagsResponse, tags=["Analysis"])
 async def get_video_tags(
@@ -174,36 +104,14 @@ async def get_video_tags(
     Get relevant tags for the YouTube video.
     """
     try:
-        # Validate input
-        if not url:
-            raise ValueError("YouTube URL cannot be empty")
-            
-        # Extract video ID
         video_id = extract_video_id(url)
-        if not video_id:
-            raise ValueError(f"Could not extract video ID from provided URL: {url}")
-            
-        # Get transcript text
         transcript_text = get_transcript_text(video_id)
-        
-        # Generate tags
         tags = generate_tags(transcript_text, max_tags)
-        
         return {"video_id": video_id, "tags": tags}
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        print(f"Error processing tags request for {url}: {str(e)}")
-        print(traceback.format_exc())
-        
-        error_message = str(e)
-        if "Could not retrieve a transcript" in error_message:
-            raise HTTPException(
-                status_code=404, 
-                detail=f"No transcript available for video ID {video_id}. The video might have disabled captions or YouTube might be blocking access."
-            )
-        else:
-            raise HTTPException(status_code=500, detail=f"Server error: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/topics", response_model=TopicResponse, tags=["Analysis"])
 async def get_video_topics(url: str = Query(..., description="YouTube video URL")):
@@ -211,36 +119,43 @@ async def get_video_topics(url: str = Query(..., description="YouTube video URL"
     Get topic breakdowns with timestamps for the YouTube video.
     """
     try:
-        # Validate input
-        if not url:
-            raise ValueError("YouTube URL cannot be empty")
-            
-        # Extract video ID
         video_id = extract_video_id(url)
-        if not video_id:
-            raise ValueError(f"Could not extract video ID from provided URL: {url}")
-            
-        # Get transcript data with timestamps
         transcript_data = get_transcript(video_id)
-        
-        # Generate topic timestamps
         topics = generate_topic_timestamps(transcript_data)
-        
         return {"video_id": video_id, "topics": topics}
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        print(f"Error processing topics request for {url}: {str(e)}")
-        print(traceback.format_exc())
-        
-        error_message = str(e)
-        if "Could not retrieve a transcript" in error_message:
-            raise HTTPException(
-                status_code=404, 
-                detail=f"No transcript available for video ID {video_id}. The video might have disabled captions or YouTube might be blocking access."
-            )
-        else:
-            raise HTTPException(status_code=500, detail=f"Server error: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/proxies", tags=["Debug"])
+async def test_proxy_connections():
+    """
+    Test all proxies and return working ones.
+    """
+    working_proxies = test_proxies()
+    return {
+        "total_proxies": len(PROXY_LIST),
+        "working_proxies": len(working_proxies),
+        "proxies": working_proxies
+    }
+
+@app.get("/debug", tags=["Debug"])
+async def get_debug_info():
+    """
+    Get debug information about the API.
+    """
+    import platform
+    import sys
+    import os
+    
+    return {
+        "platform": platform.platform(),
+        "python_version": sys.version,
+        "proxy_count": len(PROXY_LIST),
+        "proxies": PROXY_LIST,
+        "environment": {k: v for k, v in os.environ.items() if not k.startswith("OPEN") and not "SECRET" in k.upper() and not "KEY" in k.upper()}
+    }
 
 if __name__ == "__main__":
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True) 

@@ -1,17 +1,33 @@
 from youtube_transcript_api import YouTubeTranscriptApi
-from youtube_transcript_api._errors import TranscriptsDisabled, NoTranscriptAvailable
+from youtube_transcript_api._errors import TranscriptsDisabled, NoTranscriptFound
 from urllib.parse import urlparse, parse_qs
 from typing import List, Dict, Any, Optional
 import random
+import requests
 import time
+import os
+from dotenv import load_dotenv
 
-# List of common user agents to rotate through
-USER_AGENTS = [
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.3 Safari/605.1.15",
-    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1"
+# Load environment variables
+load_dotenv()
+
+# List of free proxies - in production, replace with paid reliable proxies
+# Format: "http://ip:port" or "http://username:password@ip:port"
+DEFAULT_PROXIES = [
+    # Free proxies - replace with your own
+    "http://204.157.240.53:999",
+    "http://52.168.34.113:80",
+    "http://169.55.89.6:80",
+    "http://103.152.112.162:80",
+    "http://168.119.119.107:8085",
 ]
+
+# Get proxies from environment variable if available
+PROXY_LIST = os.getenv("PROXY_LIST", "").split(",") if os.getenv("PROXY_LIST") else DEFAULT_PROXIES
+
+def get_random_proxy():
+    """Get a random proxy from the list."""
+    return random.choice(PROXY_LIST) if PROXY_LIST else None
 
 def extract_video_id(url: str) -> str:
     """
@@ -47,46 +63,51 @@ def extract_video_id(url: str) -> str:
     
     raise ValueError(f"Could not extract video ID from URL: {url}")
 
-def get_transcript(video_id: str, retries: int = 3) -> List[Dict[str, Any]]:
+def get_transcript(video_id: str, max_retries: int = 3) -> List[Dict[str, Any]]:
     """
-    Get the transcript for a YouTube video with retries and user-agent rotation.
+    Get the transcript for a YouTube video with proxy rotation and retries.
     
     Args:
         video_id: The YouTube video ID
-        retries: Number of retry attempts
+        max_retries: Maximum number of retry attempts
         
     Returns:
         List of transcript segments with text and timestamp information
     """
-    attempt = 0
-    last_error = None
+    errors = []
     
-    while attempt < retries:
+    for attempt in range(max_retries):
         try:
-            # Select a random user agent
-            user_agent = random.choice(USER_AGENTS)
+            proxy = get_random_proxy()
             
-            # Add a small delay between retries to avoid rate limiting
-            if attempt > 0:
-                time.sleep(2)
-            
-            # Try with different language options if available
-            try:
-                # First try with default language
-                return YouTubeTranscriptApi.get_transcript(video_id, proxies=None)
-            except (TranscriptsDisabled, NoTranscriptAvailable):
-                # Then try with auto-generated transcripts
-                return YouTubeTranscriptApi.get_transcript(video_id, languages=['en', 'en-US', 'en-GB', 'es', 'fr', 'de'], proxies=None)
+            if proxy:
+                print(f"Attempt {attempt+1}/{max_retries} using proxy: {proxy}")
+                proxies = {
+                    "http": proxy,
+                    "https": proxy.replace("http://", "https://") if proxy.startswith("http://") else proxy
+                }
                 
+                # Use the proxy with YouTubeTranscriptApi
+                transcript = YouTubeTranscriptApi.get_transcript(
+                    video_id,
+                    proxies=proxies
+                )
+                
+                return transcript
+            else:
+                # Fallback to no proxy if none available
+                return YouTubeTranscriptApi.get_transcript(video_id)
+                
+        except (TranscriptsDisabled, NoTranscriptFound) as e:
+            # These are permanent errors, no need to retry
+            raise Exception(f"Error fetching transcript: {str(e)}")
         except Exception as e:
-            last_error = e
-            attempt += 1
+            errors.append(f"Attempt {attempt+1} error: {str(e)}")
+            time.sleep(1)  # Wait before retrying
     
-    # If all retries failed, raise the last error
-    if video_id == "":
-        raise ValueError("Empty video ID provided")
-        
-    raise Exception(f"Error fetching transcript after {retries} attempts: {str(last_error)}")
+    # All retries failed
+    error_message = "\n".join(errors)
+    raise Exception(f"Failed to fetch transcript after {max_retries} attempts with different proxies:\n{error_message}")
 
 def get_transcript_text(video_id: str) -> str:
     """
@@ -113,4 +134,24 @@ def format_seconds_to_mmss(seconds: float) -> str:
     """
     minutes = int(seconds // 60)
     remaining_seconds = int(seconds % 60)
-    return f"{minutes:02d}:{remaining_seconds:02d}" 
+    return f"{minutes:02d}:{remaining_seconds:02d}"
+
+def test_proxies():
+    """
+    Test all proxies and return working ones.
+    """
+    working_proxies = []
+    for proxy in PROXY_LIST:
+        try:
+            proxies = {
+                "http": proxy,
+                "https": proxy.replace("http://", "https://") if proxy.startswith("http://") else proxy
+            }
+            response = requests.get("https://www.youtube.com", proxies=proxies, timeout=5)
+            if response.status_code == 200:
+                working_proxies.append(proxy)
+                print(f"Proxy working: {proxy}")
+        except Exception as e:
+            print(f"Proxy failed: {proxy} - {str(e)}")
+    
+    return working_proxies 
