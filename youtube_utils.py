@@ -4,10 +4,55 @@ from typing import List, Dict, Any, Optional
 import logging
 from proxy_utils import proxy_manager
 from yt_transcript_proxy import transcript_fetcher
+import requests
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# Define a static list of proxies as backup in case the ProxyScrape API fails
+PROXY_LIST = [
+    "159.65.69.186:9300",
+    "167.71.5.83:3128",
+    "178.128.177.142:8080",
+    "139.59.1.14:3128",
+    "165.22.6.221:8080",
+    "159.203.61.169:3128",
+    "157.230.177.3:8888"
+]
+
+def test_proxies(url: str = "https://www.youtube.com") -> List[str]:
+    """
+    Test which proxies in the PROXY_LIST are currently working.
+    
+    Args:
+        url: The URL to test the proxies against
+        
+    Returns:
+        List of working proxy strings
+    """
+    working_proxies = []
+    
+    for proxy_str in PROXY_LIST:
+        proxy = {
+            "http": f"http://{proxy_str}",
+            "https": f"http://{proxy_str}"
+        }
+        
+        try:
+            logger.info(f"Testing proxy: {proxy_str}")
+            response = requests.get(url, proxies=proxy, timeout=5)
+            
+            if response.status_code == 200:
+                logger.info(f"Proxy {proxy_str} is working")
+                working_proxies.append(proxy_str)
+            else:
+                logger.warning(f"Proxy {proxy_str} returned status code: {response.status_code}")
+        except Exception as e:
+            logger.warning(f"Proxy {proxy_str} failed: {str(e)}")
+    
+    logger.info(f"Found {len(working_proxies)} working proxies out of {len(PROXY_LIST)}")
+    return working_proxies
 
 def extract_video_id(url: str) -> str:
     """

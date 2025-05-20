@@ -26,28 +26,55 @@ class ProxyManager:
         self.refresh_proxies()
     
     def refresh_proxies(self) -> None:
-        """Refresh the list of proxies from ProxyScrape API."""
-        try:
-            # Use a higher timeout for more reliable proxies
-            url = "https://api.proxyscrape.com/v2/?request=displayproxies&protocol=http&timeout=10000&country=all&ssl=yes&anonymity=elite"
-            response = requests.get(url, timeout=10)
-            
-            if response.status_code == 200:
-                # Split the response by newlines to get individual proxies
-                proxy_list = response.text.strip().split('\n')
+        """Refresh the list of proxies from multiple sources."""
+        proxies = []
+        
+        # Try multiple sources to ensure we get some working proxies
+        sources = [
+            # ProxyScrape free API
+            "https://api.proxyscrape.com/v2/?request=displayproxies&protocol=http&timeout=10000&country=all&ssl=yes&anonymity=all",
+            # Free-proxy-list.net
+            "https://raw.githubusercontent.com/clarketm/proxy-list/master/proxy-list-raw.txt",
+            # Another proxy source
+            "https://www.proxy-list.download/api/v1/get?type=http"
+        ]
+        
+        # Try each source
+        for source_url in sources:
+            try:
+                logger.info(f"Fetching proxies from: {source_url}")
+                response = requests.get(source_url, timeout=10)
                 
-                # Format proxies for use with requests
-                self.proxies = [f"http://{proxy.strip()}" for proxy in proxy_list if proxy.strip()]
-                self.used_proxies = set()
-                self.current_index = 0
-                self.last_refresh = time.time()
-                
-                logger.info(f"Successfully refreshed proxies. Total proxies: {len(self.proxies)}")
-            else:
-                logger.error(f"Failed to refresh proxies. Status code: {response.status_code}")
-        except Exception as e:
-            logger.error(f"Error refreshing proxies: {str(e)}")
-            # If we couldn't get new proxies, keep using the existing ones
+                if response.status_code == 200:
+                    # Split the response by newlines to get individual proxies
+                    proxy_list = response.text.strip().split('\n')
+                    
+                    # Format proxies for use with requests and filter out empty ones
+                    new_proxies = [f"http://{proxy.strip()}" for proxy in proxy_list if proxy.strip()]
+                    proxies.extend(new_proxies)
+                    
+                    logger.info(f"Got {len(new_proxies)} proxies from {source_url}")
+                else:
+                    logger.error(f"Failed to fetch proxies from {source_url}. Status code: {response.status_code}")
+            except Exception as e:
+                logger.error(f"Error fetching proxies from {source_url}: {str(e)}")
+        
+        # Deduplicate proxies
+        unique_proxies = list(set(proxies))
+        
+        # Use the new list if we got any proxies, otherwise keep the old list
+        if unique_proxies:
+            self.proxies = unique_proxies
+            self.used_proxies = set()
+            self.current_index = 0
+            self.last_refresh = time.time()
+            logger.info(f"Successfully refreshed proxies. Total unique proxies: {len(self.proxies)}")
+        else:
+            logger.error("Failed to get any proxies from all sources. Using hardcoded backup proxies.")
+            # Use hardcoded backup proxies
+            from youtube_utils import PROXY_LIST
+            self.proxies = [f"http://{proxy}" for proxy in PROXY_LIST]
+            logger.info(f"Using {len(self.proxies)} backup proxies")
     
     def get_proxy(self) -> Optional[Dict[str, str]]:
         """
@@ -60,9 +87,11 @@ class ProxyManager:
         if time.time() - self.last_refresh > self.refresh_interval:
             self.refresh_proxies()
         
-        # If no proxies available, return None
+        # If no proxies available, try to fetch again
         if not self.proxies:
-            return None
+            self.refresh_proxies()
+            if not self.proxies:
+                return None
         
         # Get next proxy
         proxy = self.proxies[self.current_index]
