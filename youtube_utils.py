@@ -1,13 +1,17 @@
-from youtube_transcript_api import YouTubeTranscriptApi, NoTranscriptFound, TranscriptsDisabled, VideoUnavailable, NoTranscriptAvailable
+from youtube_transcript_api import YouTubeTranscriptApi
+from youtube_transcript_api._errors import TranscriptsDisabled, NoTranscriptAvailable
 from urllib.parse import urlparse, parse_qs
 from typing import List, Dict, Any, Optional
-import sys
-import logging
-from youtube_handler import YouTubeTranscriptFetcher
+import random
+import time
 
-# Set up logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
+# List of common user agents to rotate through
+USER_AGENTS = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.3 Safari/605.1.15",
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1"
+]
 
 def extract_video_id(url: str) -> str:
     """
@@ -43,54 +47,46 @@ def extract_video_id(url: str) -> str:
     
     raise ValueError(f"Could not extract video ID from URL: {url}")
 
-def get_transcript(video_id: str) -> List[Dict[str, Any]]:
+def get_transcript(video_id: str, retries: int = 3) -> List[Dict[str, Any]]:
     """
-    Get the transcript for a YouTube video.
+    Get the transcript for a YouTube video with retries and user-agent rotation.
     
     Args:
         video_id: The YouTube video ID
+        retries: Number of retry attempts
         
     Returns:
         List of transcript segments with text and timestamp information
     """
-    try:
-        logger.info(f"Attempting to fetch transcript for video ID: {video_id}")
-        
-        # First try: Use youtube-transcript-api
+    attempt = 0
+    last_error = None
+    
+    while attempt < retries:
         try:
-            transcript = YouTubeTranscriptApi.get_transcript(video_id)
-            logger.info(f"Successfully fetched transcript using youtube-transcript-api")
-            return transcript
-        except (NoTranscriptFound, TranscriptsDisabled, VideoUnavailable, NoTranscriptAvailable) as e:
-            logger.warning(f"youtube-transcript-api method failed: {str(e)}")
-            logger.info("Trying alternate transcript fetching methods...")
+            # Select a random user agent
+            user_agent = random.choice(USER_AGENTS)
             
-            # Second try: Try with list_transcripts to get more information
+            # Add a small delay between retries to avoid rate limiting
+            if attempt > 0:
+                time.sleep(2)
+            
+            # Try with different language options if available
             try:
-                transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
-                available_transcripts = [t.language_code for t in transcript_list]
+                # First try with default language
+                return YouTubeTranscriptApi.get_transcript(video_id, proxies=None)
+            except (TranscriptsDisabled, NoTranscriptAvailable):
+                # Then try with auto-generated transcripts
+                return YouTubeTranscriptApi.get_transcript(video_id, languages=['en', 'en-US', 'en-GB', 'es', 'fr', 'de'], proxies=None)
                 
-                if available_transcripts:
-                    logger.info(f"Available transcripts: {available_transcripts}")
-                    # Try to get the first available transcript
-                    transcript = transcript_list.find_transcript(available_transcripts).fetch()
-                    logger.info(f"Successfully fetched alternate transcript: {available_transcripts[0]}")
-                    return transcript
-                else:
-                    logger.warning(f"No transcripts found using list_transcripts")
-            except Exception as inner_e:
-                logger.warning(f"list_transcripts method failed: {str(inner_e)}")
-            
-            # Third try: Use our direct YouTube API access method
-            logger.info("Trying direct YouTube API access method")
-            return YouTubeTranscriptFetcher.fetch_transcript(video_id)
+        except Exception as e:
+            last_error = e
+            attempt += 1
+    
+    # If all retries failed, raise the last error
+    if video_id == "":
+        raise ValueError("Empty video ID provided")
         
-    except Exception as e:
-        logger.error(f"All transcript fetching methods failed!")
-        logger.error(f"Unexpected error fetching transcript: {str(e)}")
-        logger.error(f"Python version: {sys.version}")
-        logger.error(f"youtube-transcript-api version: {getattr(YouTubeTranscriptApi, '__version__', 'unknown')}")
-        raise Exception(f"Error fetching transcript: {str(e)}")
+    raise Exception(f"Error fetching transcript after {retries} attempts: {str(last_error)}")
 
 def get_transcript_text(video_id: str) -> str:
     """
